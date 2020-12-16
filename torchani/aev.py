@@ -511,7 +511,6 @@ class AEVComputer(torch.nn.Module):
             aev = compute_cuaev(species, coordinates, self.triu_index, self.constants(), self.num_species, None)
             return SpeciesAEV(species, aev)
 
-
         if cell is None and pbc is None:
             aev = compute_aev(species, coordinates, self.triu_index, self.constants(), self.sizes, None)
         else:

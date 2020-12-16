@@ -9,7 +9,6 @@ path = os.path.dirname(os.path.realpath(__file__))
 N = 97
 
 
-
 class TestCorrectInput(torchani.testing.TestCase):
 
     def setUp(self):

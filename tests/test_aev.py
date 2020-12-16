@@ -16,7 +16,6 @@ const_file = os.path.join(path, '../torchani/resources/ani-1x_8x/rHCNO-5.2R_16-3
 N = 97
 
 
-
 class TestAEVConstructor(torchani.testing.TestCase):
 
     # Test that checks that the friendly constructor
@@ -38,6 +37,7 @@ class TestAEVConstructor(torchani.testing.TestCase):
         constants_alt = aev_computer_alt.constants()
         for c, ca in zip(constants, constants_alt):
             self.assertEqual(c, ca)
+
 
 class TestIsolated(torchani.testing.TestCase):
 

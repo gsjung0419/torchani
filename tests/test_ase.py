@@ -67,7 +67,6 @@ class TestASE(torchani.testing.TestCase):
         dyn.run(120)
 
 
-
 class TestASEWithPTI(unittest.TestCase):
     # Tests that the values obtained by wrapping a BuiltinModel or
     # BuiltinEnsemble with a calculator are the same with and without

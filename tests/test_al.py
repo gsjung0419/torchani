@@ -88,7 +88,6 @@ class TestALQBC(TestALAtomic):
 
         coord2 = torch.randn(1, 5, 3, dtype=torch.double, device=self.device)
 
-
         coordinates = torch.cat((coord1, coord2), dim=0)
         species = torch.tensor([[1, 1, 1, 1, 6], [-1, 1, 1, 1, 1]],
                                dtype=torch.long,
@@ -99,7 +98,6 @@ class TestALQBC(TestALAtomic):
         std[0] = std[0] / math.sqrt(5)
         std[1] = std[1] / math.sqrt(4)
         self.assertEqual(std, qbc)
-
 
 
 if __name__ == '__main__':

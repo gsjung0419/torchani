@@ -9,6 +9,7 @@ dspath = os.path.join(path, '../dataset/ani-1x/sample.h5')
 
 
 class TestBuiltinModelsJIT(torchani.testing.TestCase):
+
     # Tests if JIT compiled models have the same output energies
     # as eager (non JIT) models
 

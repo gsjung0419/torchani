@@ -15,6 +15,7 @@ if has_cuaev:
 else:
     warnings.warn("cuaev not installed")
 
+
 if sys.version_info[:2] < (3, 7):
     class FakeFinal:
         def __getitem__(self, x):
@@ -509,6 +510,7 @@ class AEVComputer(torch.nn.Module):
             assert (cell is None and pbc is None), "cuaev does not support PBC"
             aev = compute_cuaev(species, coordinates, self.triu_index, self.constants(), self.num_species, None)
             return SpeciesAEV(species, aev)
+
 
         if cell is None and pbc is None:
             aev = compute_aev(species, coordinates, self.triu_index, self.constants(), self.sizes, None)

@@ -49,7 +49,6 @@ def parse_neurochem_resources(info_file_path):
             source = os.path.join(resource_path, extracted_name, "resources")
             dir_util.copy_tree(source, resource_path)
             dir_util.remove_tree(os.path.join(resource_path, extracted_name))
-
         else:
             raise ValueError('File {0} could not be found either in {1} or {2}\n'
                              'It is also not one of the supported builtin info files:'

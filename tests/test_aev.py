@@ -16,7 +16,9 @@ const_file = os.path.join(path, '../torchani/resources/ani-1x_8x/rHCNO-5.2R_16-3
 N = 97
 
 
+
 class TestAEVConstructor(torchani.testing.TestCase):
+
     # Test that checks that the friendly constructor
     # reproduces the values from ANI1x with the correct parameters
     def testCoverLinearly(self):
@@ -37,8 +39,8 @@ class TestAEVConstructor(torchani.testing.TestCase):
         for c, ca in zip(constants, constants_alt):
             self.assertEqual(c, ca)
 
-
 class TestIsolated(torchani.testing.TestCase):
+
     # Tests that there is no error when atoms are separated
     # a distance greater than the cutoff radius from all other atoms
     # this can throw an IndexError for large distances or lone atoms

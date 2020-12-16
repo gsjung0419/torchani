@@ -11,6 +11,7 @@ N = 10
 class TestEnsemble(torchani.testing.TestCase):
 
     def setUp(self):
+
         self.conformations = 20
         ani1x = torchani.models.ANI1x()
         self.aev_computer = ani1x.aev_computer

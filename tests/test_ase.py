@@ -37,6 +37,7 @@ class TestASE(torchani.testing.TestCase):
         dyn.run(100)
         f = atoms.get_forces()
         fn = get_numeric_force(atoms, 0.001)
+
         self.assertEqual(f, fn, rtol=0.1, atol=0)
 
     def testWithNumericalStressWithPBCEnabled(self):
@@ -64,6 +65,7 @@ class TestASE(torchani.testing.TestCase):
             self.assertEqual(stress, numerical_stress)
         dyn.attach(test_stress, interval=30)
         dyn.run(120)
+
 
 
 class TestASEWithPTI(unittest.TestCase):

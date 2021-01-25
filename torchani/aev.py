@@ -91,6 +91,51 @@ def angular_terms(Rca: float, ShfZ: Tensor, EtaA: Tensor, Zeta: Tensor,
     return ret.flatten(start_dim=1)
 
 
+def compute_shifts_array(cell: Tensor, pbc: Tensor, cutoff: float) -> Tensor:
+    """Compute the shifts of unit cell along the given cell vectors to make it
+    large enough to contain all pairs of neighbor atoms with PBC under
+    consideration
+
+    Arguments:
+        cell (:class:`torch.Tensor`): tensor of shape (,3, 3) of the three
+        vectors defining unit cell:
+            tensor([[[x1, y1, z1], [x2, y2, z2], [x3, y3, z3]])
+        cutoff (float): the cutoff inside which atoms are considered pairs
+        pbc (:class:`torch.Tensor`): boolean vector of size 3 storing
+            if pbc is enabled for that direction.
+
+    Returns:
+        :class:`torch.Tensor`: long tensor of shifts. the center cell and
+            symmetric cells are not included.
+    """
+    
+    
+    reciprocal_cell = cell.inverse().t()
+    inv_distances = reciprocal_cell.norm(2, -1)
+    num_repeats = torch.ceil(cutoff * inv_distances).to(torch.long)
+    num_repeats = torch.where(pbc, num_repeats, num_repeats.new_zeros(()))
+    r1 = torch.arange(1, num_repeats[0].item() + 1, device=cell.device)
+    r2 = torch.arange(1, num_repeats[1].item() + 1, device=cell.device)
+    r3 = torch.arange(1, num_repeats[2].item() + 1, device=cell.device)
+    o = torch.zeros(1, dtype=torch.long, device=cell.device)
+
+    
+    return torch.cat([
+        torch.cartesian_prod(r1, r2, r3),
+        torch.cartesian_prod(r1, r2, o),
+        torch.cartesian_prod(r1, r2, -r3),
+        torch.cartesian_prod(r1, o, r3),
+        torch.cartesian_prod(r1, o, o),
+        torch.cartesian_prod(r1, o, -r3),
+        torch.cartesian_prod(r1, -r2, r3),
+        torch.cartesian_prod(r1, -r2, o),
+        torch.cartesian_prod(r1, -r2, -r3),
+        torch.cartesian_prod(o, r2, r3),
+        torch.cartesian_prod(o, r2, o),
+        torch.cartesian_prod(o, r2, -r3),
+        torch.cartesian_prod(o, o, r3),
+    ])
+
 def compute_shifts(cell: Tensor, pbc: Tensor, cutoff: float) -> Tensor:
     """Compute the shifts of unit cell along the given cell vectors to make it
     large enough to contain all pairs of neighbor atoms with PBC under
@@ -181,6 +226,61 @@ def neighbor_pairs(padding_mask: Tensor, coordinates: Tensor, cell: Tensor,
     atom_index12 = p12_all[:, pair_index]
     shifts = shifts_all.index_select(0, pair_index)
     return molecule_index + atom_index12, shifts
+
+def neighbor_pairs_array(padding_mask: Tensor, coordinates: Tensor, cell: Tensor,
+                   shifts: Tensor, cutoff: float) -> Tuple[Tensor, Tensor]:
+    """Compute pairs of atoms that are neighbors
+
+    Arguments:
+        padding_mask (:class:`torch.Tensor`): boolean tensor of shape
+            (molecules, atoms) for padding mask. 1 == is padding.
+        coordinates (:class:`torch.Tensor`): tensor of shape
+            (molecules, atoms, 3) for atom coordinates.
+        cell (:class:`torch.Tensor`): tensor of shape (3, 3) of the three vectors
+            defining unit cell: tensor([[x1, y1, z1], [x2, y2, z2], [x3, y3, z3]])
+        cutoff (float): the cutoff inside which atoms are considered pairs
+        shifts (:class:`torch.Tensor`): tensor of shape (?, 3) storing shifts
+    """
+    coordinates = coordinates.detach().masked_fill(padding_mask.unsqueeze(-1), math.nan)
+    cell = cell.detach()
+    num_atoms = padding_mask.shape[1]
+    num_mols = padding_mask.shape[0]
+    all_atoms = torch.arange(num_atoms, device=cell.device)
+
+    # Step 2: center cell
+    # torch.triu_indices is faster than combinations
+    p12_center = torch.triu_indices(num_atoms, num_atoms, 1, device=cell.device)
+    shifts_center = shifts.new_zeros((p12_center.shape[1], 3))
+
+    # Step 3: cells with shifts
+    # shape convention (shift index, molecule index, atom index, 3)
+    num_shifts = shifts.shape[0]
+    all_shifts = torch.arange(num_shifts, device=cell.device)
+    prod = torch.cartesian_prod(all_shifts, all_atoms, all_atoms).t()
+    shift_index = prod[0]
+    p12 = prod[1:]
+    shifts_outside = shifts.index_select(0, shift_index)
+
+    # Step 4: combine results for all cells
+    shifts_all = torch.cat([shifts_center, shifts_outside])
+    p12_all = torch.cat([p12_center, p12], dim=1)
+    shift_values = shifts_all.to(cell.dtype) @ cell
+
+    # step 5, compute distances, and find all pairs within cutoff
+    selected_coordinates = coordinates.index_select(1, p12_all.view(-1)).view(num_mols, 2, -1, 3)
+
+    vec = selected_coordinates[:, 0, ...] - selected_coordinates[:, 1, ...] + shift_values[:, ...]    
+    distances = vec.norm(2, -1)
+    in_cutoff = (distances <= cutoff).nonzero()
+    molecule_index, pair_index = in_cutoff.unbind(1)
+    molecule_index *= num_atoms
+    atom_index12 = p12_all[:, pair_index]
+    shifts = shifts_all.index_select(0, pair_index)
+    
+    fvec = vec.flatten(0,1)
+    selected_fvec = fvec.index_select(0,(molecule_index + atom_index12).view(-1)).view(2,-1,3)
+    vec = selected_fvec[0]
+    return vec, molecule_index + atom_index12, shifts
 
 
 def neighbor_pairs_nopbc(padding_mask: Tensor, coordinates: Tensor, cutoff: float) -> Tensor:
@@ -322,6 +422,61 @@ def compute_aev(species: Tensor, coordinates: Tensor, triu_index: Tensor,
     angular_aev = angular_aev.reshape(num_molecules, num_atoms, angular_length)
     return torch.cat([radial_aev, angular_aev], dim=-1)
 
+
+def compute_aev_array(species: Tensor, coordinates: Tensor, triu_index: Tensor,
+                constants: Tuple[float, Tensor, Tensor, float, Tensor, Tensor, Tensor, Tensor],
+                sizes: Tuple[int, int, int, int, int], cell_shifts: Optional[Tuple[Tensor, Tensor]]) -> Tensor:
+    Rcr, EtaR, ShfR, Rca, ShfZ, EtaA, Zeta, ShfA = constants
+    num_species, radial_sublength, radial_length, angular_sublength, angular_length = sizes
+    num_molecules = species.shape[0]
+    num_atoms = species.shape[1]
+    num_species_pairs = angular_length // angular_sublength
+    coordinates_ = coordinates
+    coordinates = coordinates_.flatten(0, 1)
+
+    # PBC calculation is bypassed if there are no shifts
+    if cell_shifts is None:
+        atom_index12 = neighbor_pairs_nopbc(species == -1, coordinates_, Rcr)
+        selected_coordinates = coordinates.index_select(0, atom_index12.view(-1)).view(2, -1, 3)
+        vec = selected_coordinates[0] - selected_coordinates[1]
+    else:
+        cell, shifts = cell_shifts
+        vec,atom_index12, shifts = neighbor_pairs_array(species == -1, coordinates_, cell, shifts, Rcr)
+        #shift_values = shifts.to(cell.dtype) @ selected_cell
+        selected_coordinates = coordinates.index_select(0, atom_index12.view(-1)).view(2, -1, 3)
+        #vec = selected_coordinates[0] - selected_coordinates[1] + shift_values.flatten(0,1)
+
+    species = species.flatten()
+    species12 = species[atom_index12]
+
+    distances = vec.norm(2, -1)
+
+    # compute radial aev
+    radial_terms_ = radial_terms(Rcr, EtaR, ShfR, distances)
+    radial_aev = radial_terms_.new_zeros((num_molecules * num_atoms * num_species, radial_sublength))
+    index12 = atom_index12 * num_species + species12.flip(0)
+    radial_aev.index_add_(0, index12[0], radial_terms_)
+    radial_aev.index_add_(0, index12[1], radial_terms_)
+    radial_aev = radial_aev.reshape(num_molecules, num_atoms, radial_length)
+
+    # Rca is usually much smaller than Rcr, using neighbor list with cutoff=Rcr is a waste of resources
+    # Now we will get a smaller neighbor list that only cares about atoms with distances <= Rca
+    even_closer_indices = (distances <= Rca).nonzero().flatten()
+    atom_index12 = atom_index12.index_select(1, even_closer_indices)
+    species12 = species12.index_select(1, even_closer_indices)
+    vec = vec.index_select(0, even_closer_indices)
+
+    # compute angular aev
+    central_atom_index, pair_index12, sign12 = triple_by_molecule(atom_index12)
+    species12_small = species12[:, pair_index12]
+    vec12 = vec.index_select(0, pair_index12.view(-1)).view(2, -1, 3) * sign12.unsqueeze(-1)
+    species12_ = torch.where(sign12 == 1, species12_small[1], species12_small[0])
+    angular_terms_ = angular_terms(Rca, ShfZ, EtaA, Zeta, ShfA, vec12)
+    angular_aev = angular_terms_.new_zeros((num_molecules * num_atoms * num_species_pairs, angular_sublength))
+    index = central_atom_index * num_species_pairs + triu_index[species12_[0], species12_[1]]
+    angular_aev.index_add_(0, index, angular_terms_)
+    angular_aev = angular_aev.reshape(num_molecules, num_atoms, angular_length)
+    return torch.cat([radial_aev, angular_aev], dim=-1)
 
 def compute_cuaev(species: Tensor, coordinates: Tensor, triu_index: Tensor,
                   constants: Tuple[float, Tensor, Tensor, float, Tensor, Tensor, Tensor, Tensor],
@@ -514,7 +669,13 @@ class AEVComputer(torch.nn.Module):
         else:
             assert (cell is not None and pbc is not None)
             cutoff = max(self.Rcr, self.Rca)
-            shifts = compute_shifts(cell, pbc, cutoff)
-            aev = compute_aev(species, coordinates, self.triu_index, self.constants(), self.sizes, (cell, shifts))
+            if(cell.dim()==3):
+                shifts = compute_shifts_array(cell[0], pbc, cutoff)
+                #shifts = torch.tensor([[ 1,  1,  1],[ 1,  1,  0],[ 1,  1, -1],[ 1,  0,  1],[ 1,  0,  0],[ 1,  0, -1],[ 1, -1,  1],[ 1, -1,  0],[ 1, -1, -1],[ 0,  1,  1],[ 0,  1,  0],[ 0,  1, -1],[ 0,  0,  1]])
+            else:shifts = compute_shifts(cell, pbc, cutoff)
+
+            if(cell.dim()==3):
+                aev = compute_aev_array(species, coordinates, self.triu_index, self.constants(), self.sizes, (cell, shifts))
+            else:aev = compute_aev(species, coordinates, self.triu_index, self.constants(), self.sizes, (cell, shifts))
 
         return SpeciesAEV(species, aev)

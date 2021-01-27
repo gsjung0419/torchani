@@ -194,31 +194,47 @@ def neighbor_pairs(padding_mask: Tensor, coordinates: Tensor, cell: Tensor,
     """
     coordinates = coordinates.detach().masked_fill(padding_mask.unsqueeze(-1), math.nan)
     cell = cell.detach()
-    num_atoms = padding_mask.shape[1]
-    num_mols = padding_mask.shape[0]
-    all_atoms = torch.arange(num_atoms, device=cell.device)
+    num_atoms = padding_mask.shape[1] 
+    num_mols = padding_mask.shape[0] # it is also number of frames
+    all_atoms = torch.arange(num_atoms, device=cell.device) #CH4, [0,1,2,3,4]
 
     # Step 2: center cell
     # torch.triu_indices is faster than combinations
-    p12_center = torch.triu_indices(num_atoms, num_atoms, 1, device=cell.device)
-    shifts_center = shifts.new_zeros((p12_center.shape[1], 3))
+    #p12_center (2,335)
+    p12_center = torch.triu_indices(num_atoms, num_atoms, 1, device=cell.device) # size[2,10] 5C2 (combination)
+    #tensor([[0, 0, 0, 0, 1, 1, 1, 2, 2, 3],[1, 2, 3, 4, 2, 3, 4, 3, 4, 4]]); in a unit cell, possible combination
 
+    shifts_center = shifts.new_zeros((p12_center.shape[1], 3))
+    #Utiilze shift tensor for cell for cell. size[10,3] total combination in a cell
+    
     # Step 3: cells with shifts
     # shape convention (shift index, molecule index, atom index, 3)
-    num_shifts = shifts.shape[0]
-    all_shifts = torch.arange(num_shifts, device=cell.device)
+    num_shifts = shifts.shape[0] # total number of shift (without center cell); 
+    all_shifts = torch.arange(num_shifts, device=cell.device) # make index for total shift
     prod = torch.cartesian_prod(all_shifts, all_atoms, all_atoms).t()
+    # now we have to have combination between all atoms and all_shifts; remember here we include the center cell contribution
+    # [shift index, atom_index, atom_index] 13 x 5 x 5 = 325
+    
     shift_index = prod[0]
+    #shift index from shift input
     p12 = prod[1:]
+    #p12 : atom_index x atom_index 325 lines
     shifts_outside = shifts.index_select(0, shift_index)
+    #take shift_cell e.g., [1,1,-1] based on the shift_index; remember that shift_cell does not include the center cell; #13. 
 
+    
     # Step 4: combine results for all cells
     shifts_all = torch.cat([shifts_center, shifts_outside])
+    #combine shifts information for center and outside
     p12_all = torch.cat([p12_center, p12], dim=1)
+    #this also combine atom to atom center and p12.
     shift_values = shifts_all.to(cell.dtype) @ cell
+    #make cell shifts values; when cell have frame
 
     # step 5, compute distances, and find all pairs within cutoff
     selected_coordinates = coordinates.index_select(1, p12_all.view(-1)).view(num_mols, 2, -1, 3)
+    #selected atoms pairs
+    
     distances = (selected_coordinates[:, 0, ...] - selected_coordinates[:, 1, ...] + shift_values).norm(2, -1)
     in_cutoff = (distances <= cutoff).nonzero()
     molecule_index, pair_index = in_cutoff.unbind(1)
@@ -273,14 +289,14 @@ def neighbor_pairs_array(padding_mask: Tensor, coordinates: Tensor, cell: Tensor
     distances = vec.norm(2, -1)
     in_cutoff = (distances <= cutoff).nonzero()
     molecule_index, pair_index = in_cutoff.unbind(1)
+    selected_shift_values = shift_values[molecule_index,pair_index,:] 
+    
     molecule_index *= num_atoms
     atom_index12 = p12_all[:, pair_index]
-    shifts = shifts_all.index_select(0, pair_index)
+    fshift_values=shift_values.flatten(0,1)
     
-    fvec = vec.flatten(0,1)
-    selected_fvec = fvec.index_select(0,(molecule_index + atom_index12).view(-1)).view(2,-1,3)
-    vec = selected_fvec[0]
-    return vec, molecule_index + atom_index12, shifts
+    shifts = shifts_all.index_select(0, pair_index)
+    return molecule_index + atom_index12, selected_shift_values
 
 
 def neighbor_pairs_nopbc(padding_mask: Tensor, coordinates: Tensor, cutoff: float) -> Tensor:
@@ -441,10 +457,10 @@ def compute_aev_array(species: Tensor, coordinates: Tensor, triu_index: Tensor,
         vec = selected_coordinates[0] - selected_coordinates[1]
     else:
         cell, shifts = cell_shifts
-        vec,atom_index12, shifts = neighbor_pairs_array(species == -1, coordinates_, cell, shifts, Rcr)
-        #shift_values = shifts.to(cell.dtype) @ selected_cell
+        atom_index12, shift_values = neighbor_pairs_array(species == -1, coordinates_, cell, shifts, Rcr)
         selected_coordinates = coordinates.index_select(0, atom_index12.view(-1)).view(2, -1, 3)
-        #vec = selected_coordinates[0] - selected_coordinates[1] + shift_values.flatten(0,1)
+
+        vec = selected_coordinates[0] - selected_coordinates[1] + shift_values
 
     species = species.flatten()
     species12 = species[atom_index12]
